@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "Session": {
+      "title": "Session",
+      "description": "A study or office hours session",
+      "type": "object",
+      "properties": {
+        "course": { "type": "string", "description": "Course code (e.g., CSC369)" },
+        "title": { "type": "string", "description": "Session title" },
+        "time": { "type": "string", "description": "Human-readable time string" },
+        "location": { "type": "string", "description": "Room or online link" },
+        "host": { "type": "string", "description": "Name of the host (TA or Prof)" },
+        "avgMin": { "type": "number", "description": "Average minutes per student" },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "Topics covered" }
+      },
+      "required": ["course", "title", "time", "location", "host", "avgMin"]
+    },
+    "Ticket": {
+      "title": "Ticket",
+      "description": "A student's request for help in a session",
+      "type": "object",
+      "properties": {
+        "topic": { "type": "string", "description": "Question topic" },
+        "assignment": { "type": "string", "description": "Related assignment" },
+        "summary": { "type": "string", "description": "Brief description of the issue" },
+        "helpType": { "type": "string", "description": "Quick Check or Deep Dive" },
+        "uid": { "type": "string", "description": "User ID of the student" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the ticket was created" },
+        "status": { "type": "string", "enum": ["active", "resolved", "archived"], "description": "Current status of the ticket" },
+        "taExplanation": { "type": "string", "description": "Feedback from the TA after resolution" }
+      },
+      "required": ["topic", "assignment", "summary", "helpType", "uid", "createdAt", "status"]
+    }
+  },
+  "firestore": {
+    "/sessions": {
+      "schema": "Session",
+      "description": "Collection of available sessions"
+    },
+    "/sessions/{sessionId}/tickets": {
+      "schema": "Ticket",
+      "description": "Queue of tickets for a specific session"
+    }
+  }
+}

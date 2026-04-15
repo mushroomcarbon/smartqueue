@@ -1,0 +1,99 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: sessions
+    // Fields:
+    //   - course: string (required)
+    //   - title: string (required)
+    //   - time: string (required)
+    //   - location: string (required)
+    //   - host: string (required)
+    //   - avgMin: number (required)
+    //   - tags: list (required)
+    //
+    // Collection: sessions/{sessionId}/tickets
+    // Fields:
+    //   - topic: string (required, max 50)
+    //   - assignment: string (required, max 50)
+    //   - summary: string (required, max 500)
+    //   - helpType: string (required, enum: ['Quick Check', 'Deep Dive'])
+    //   - uid: string (required, immutable)
+    //   - createdAt: timestamp (required, immutable)
+    //   - status: string (required, enum: ['active', 'resolved', 'archived'])
+    //   - taExplanation: string (optional, max 1000)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.email == "andrew01px2021@gmail.com" ||
+         request.auth.token.email == "admin@university.edu" ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function isValidSession(data) {
+      return data.keys().hasAll(['course', 'title', 'time', 'location', 'host', 'avgMin', 'tags']) &&
+             data.course is string && data.course.size() > 0 && data.course.size() < 20 &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 100 &&
+             data.time is string && data.time.size() > 0 && data.time.size() < 100 &&
+             data.location is string && data.location.size() > 0 && data.location.size() < 100 &&
+             data.host is string && data.host.size() > 0 && data.host.size() < 100 &&
+             data.avgMin is number && data.avgMin >= 0 &&
+             data.tags is list;
+    }
+
+    function isValidTicket(data) {
+      return data.keys().hasAll(['topic', 'assignment', 'summary', 'helpType', 'uid', 'createdAt', 'status']) &&
+             data.topic is string && data.topic.size() > 0 && data.topic.size() <= 50 &&
+             data.assignment is string && data.assignment.size() > 0 && data.assignment.size() <= 50 &&
+             data.summary is string && data.summary.size() > 0 && data.summary.size() <= 500 &&
+             data.helpType in ['Quick Check', 'Deep Dive'] &&
+             data.uid is string && data.uid == request.auth.uid &&
+             data.createdAt is timestamp &&
+             data.status in ['active', 'resolved', 'archived'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || isAdmin());
+    }
+
+    match /sessions/{sessionId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidSession(request.resource.data);
+      allow delete: if isAdmin();
+
+      match /tickets/{ticketId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && isValidTicket(request.resource.data);
+        allow update: if isAuthenticated() && (
+          isAdmin() || 
+          (isOwner(resource.data.uid) && isValidTicket(request.resource.data) && request.resource.data.uid == resource.data.uid && request.resource.data.createdAt == resource.data.createdAt) ||
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['taExplanation']))
+        );
+        allow delete: if isOwner(resource.data.uid) || isAdmin();
+      }
+    }
+  }
+}
