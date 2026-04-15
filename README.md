@@ -6,7 +6,7 @@ SmartQueue is a queue management system designed to make university office hours
 
 The core problem is pretty straightforward: office hours are one of the most important touchpoints for student learning, but they're often overcrowded, unstructured, and stressful. Students don't know how long they'll wait, TAs get the same questions over and over, and quieter students get drowned out. SmartQueue tries to fix that by giving both sides better tools and better information.
 
-Check out the demo here: [https://smartqueue-demo.netlify.app/](https://smartqueue-demo.netlify.app/)
+Check out the demo here: [https://smartqueue-demo.netlify.app/](https://smartqueue-demo.netlify.app/) (Demo accounts are student1:root1234, student2:root1234, student3:root1234, student4:root1234, admin:root1234, where admin is the TA account).
 
 Check out the project website here for the design process, methodology, earlier prototypes and more: [smartqueuecsc318.netlify.app](https://smartqueuecsc318.netlify.app/)
 
