@@ -325,14 +325,14 @@ function AppContent() {
         }
       } else {
         // Debounce sign-out to avoid wiping data on transient token refreshes
-        // If user comes back within 2s, the clear is cancelled above
+        // If user comes back within 5s, the clear is cancelled above
         signOutDebounce = setTimeout(() => {
           console.log('Auth confirmed signed out — clearing session data');
           setUser(null);
           setIsAuthReady(true);
           setSessions([]);
           setCurrentScreen('LOGIN');
-        }, 2000);
+        }, 5000);
       }
     });
     return () => {
@@ -1109,8 +1109,8 @@ function AppContent() {
                 <div className="flex justify-center py-12">
                   <Loader2 className="w-8 h-8 text-primary animate-spin" />
                 </div>
-              ) : sessions.length > 0 ? (
-                sessions.map((s) => (
+              ) : sessions.filter(s => s.status !== 'archived').length > 0 ? (
+                sessions.filter(s => s.status !== 'archived').map((s) => (
                   <section key={s.id} aria-labelledby={`course-${s.id}`}>
                     <h3 id={`course-${s.id}`} className="text-lg font-bold text-dark mb-4">{s.course}</h3>
                     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden transition-shadow hover:shadow-md">
@@ -1478,11 +1478,11 @@ function AppContent() {
             </div>
 
             <section aria-labelledby="queue-list" className="mb-8">
-              <h3 id="queue-list" className="text-lg font-bold text-dark mb-4 border-b border-gray-200 pb-2">Current Queue ({session.queueCount})</h3>
-              {session.tickets.filter(t => t.status === 'active' || t.status === 'resolved').length > 0 ? (
+              <h3 id="queue-list" className="text-lg font-bold text-dark mb-4 border-b border-gray-200 pb-2">Current Queue ({session.tickets.filter(t => t.status === 'active').length})</h3>
+              {session.tickets.filter(t => t.status === 'active').length > 0 ? (
                 <div className="space-y-4">
                   {session.tickets
-                    .filter(t => t.status === 'active' || t.status === 'resolved')
+                    .filter(t => t.status === 'active')
                     .map((ticket: any, index: number) => (
                     <div 
                       key={ticket.id} 
@@ -1490,22 +1490,19 @@ function AppContent() {
                         setViewingTicketId(ticket.id);
                         setCurrentScreen('S8');
                       }}
-                      className={`bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex flex-col sm:flex-row gap-4 transition-all cursor-pointer hover:border-primary/50 hover:shadow-md active:scale-[0.99] ${ticket.status === 'resolved' ? 'opacity-80 bg-gray-50' : ''}`}
+                      className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex flex-col sm:flex-row gap-4 transition-all cursor-pointer hover:border-primary/50 hover:shadow-md active:scale-[0.99]"
                     >
-                      <div className={`shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-bold ${ticket.status === 'resolved' ? 'bg-gray-200 text-gray-400' : 'bg-gray-100 text-gray-medium'}`}>
+                      <div className="shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-bold bg-gray-100 text-gray-medium">
                         #{index + 1}
                       </div>
                       <div className="grow">
                         <div className="flex items-center gap-2 mb-1">
-                          <span className={`font-bold ${ticket.status === 'resolved' ? 'text-gray-400' : 'text-dark'}`}>{ticket.topic}</span>
+                          <span className="font-bold text-dark">{ticket.topic}</span>
                           <span className="text-gray-300">•</span>
                           <span className="text-gray-medium text-sm">{ticket.assignment}</span>
                           {ticket.attendanceMode && <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${ticket.attendanceMode === 'online' ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'}`}>{ticket.attendanceMode === 'online' ? 'Online' : 'In-Person'}</span>}
-                          {ticket.status === 'resolved' && (
-                            <span className="ml-auto px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold uppercase tracking-wider rounded">Answered</span>
-                          )}
                         </div>
-                        <p className={`line-clamp-2 ${ticket.status === 'resolved' ? 'text-gray-400' : 'text-dark'}`}>{ticket.summary}</p>
+                        <p className="line-clamp-2 text-dark">{ticket.summary}</p>
                       </div>
                     </div>
                   ))}
@@ -1779,13 +1776,14 @@ function AppContent() {
       case 'S10':
       case 'S11': {
         const activeTickets = session.tickets.filter(t => t.status === 'active');
-        const displayTickets = session.tickets.filter(t => t.status === 'active' || t.status === 'resolved');
+        const resolvedTickets = session.tickets.filter(t => t.status === 'resolved');
         
-        // Determine which ticket to show in the right panel
+        // Determine which ticket to show in the right panel (can be active or resolved)
+        const allViewableTickets = [...activeTickets, ...resolvedTickets];
         const viewingTicket = viewingTicketId 
-          ? displayTickets.find(t => t.id === viewingTicketId) || displayTickets[0]
-          : displayTickets[0];
-        const viewingTicketIndex = viewingTicket ? displayTickets.findIndex(t => t.id === viewingTicket.id) : -1;
+          ? allViewableTickets.find(t => t.id === viewingTicketId) || activeTickets[0]
+          : activeTickets[0];
+        const viewingTicketIndex = viewingTicket ? allViewableTickets.findIndex(t => t.id === viewingTicket.id) : -1;
 
         return (
           <main id="main-content" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative">
@@ -1866,37 +1864,67 @@ function AppContent() {
 
                 {/* Queue List */}
                 <section aria-labelledby="queue-list-heading">
-                  <h3 id="queue-list-heading" className="sr-only">Queue List</h3>
+                  <h3 id="queue-list-heading" className="text-xs font-bold text-gray-medium uppercase tracking-wider mb-3">Active Queue ({activeTickets.length})</h3>
                   <ol className="space-y-3">
-                    {displayTickets.map((ticket, index) => (
+                    {activeTickets.map((ticket, index) => (
                       <li 
                         key={ticket.id} 
-                        className={`${ticket.status === 'resolved' ? 'opacity-60 bg-gray-50' : (ticket.uid === user?.uid ? 'bg-primary-light border-2 border-primary' : (viewingTicket?.id === ticket.id ? 'bg-blue-50 border-2 border-blue-300' : (index === 0 ? 'bg-gray-50' : 'bg-white')))} border border-gray-200 rounded-lg p-4 flex items-center gap-4 relative overflow-hidden cursor-pointer transition-all hover:shadow-md`}
+                        className={`${ticket.uid === user?.uid ? 'bg-primary-light border-2 border-primary' : (viewingTicket?.id === ticket.id ? 'bg-blue-50 border-2 border-blue-300' : (index === 0 ? 'bg-gray-50' : 'bg-white'))} border border-gray-200 rounded-lg p-4 flex items-center gap-4 relative overflow-hidden cursor-pointer transition-all hover:shadow-md`}
                         onClick={() => setViewingTicketId(ticket.id)}
                         role="button"
                         tabIndex={0}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setViewingTicketId(ticket.id); } }}
                         aria-label={`View ticket from ${ticket.uid === user?.uid ? 'yourself' : `Student ${String.fromCharCode(65 + index)}`}: ${ticket.topic} · ${ticket.assignment}`}
                       >
-                        {ticket.uid === user?.uid && ticket.status !== 'resolved' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary"></div>}
-                        {viewingTicket?.id === ticket.id && ticket.uid !== user?.uid && ticket.status !== 'resolved' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-400"></div>}
-                        <div className={`w-10 h-10 rounded-full ${ticket.status === 'resolved' ? 'bg-gray-200 text-gray-400' : (ticket.uid === user?.uid ? 'bg-primary text-white' : (viewingTicket?.id === ticket.id ? 'bg-blue-200 text-blue-700' : (index === 0 ? 'bg-gray-200' : 'bg-gray-100')))} flex items-center justify-center font-bold text-gray-medium shrink-0`}>{index + 1}</div>
+                        {ticket.uid === user?.uid && <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary"></div>}
+                        {viewingTicket?.id === ticket.id && ticket.uid !== user?.uid && <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-400"></div>}
+                        <div className={`w-10 h-10 rounded-full ${ticket.uid === user?.uid ? 'bg-primary text-white' : (viewingTicket?.id === ticket.id ? 'bg-blue-200 text-blue-700' : (index === 0 ? 'bg-gray-200' : 'bg-gray-100'))} flex items-center justify-center font-bold text-gray-medium shrink-0`}>{index + 1}</div>
                         <div className="grow">
                           <div className="flex items-center gap-2">
-                            <span className={`font-bold ${ticket.status === 'resolved' ? 'text-gray-400' : (ticket.uid === user?.uid ? 'text-primary' : 'text-dark')}`}>{ticket.uid === user?.uid ? 'You' : `Student ${String.fromCharCode(65 + index)}`}</span>
+                            <span className={`font-bold ${ticket.uid === user?.uid ? 'text-primary' : 'text-dark'}`}>{ticket.uid === user?.uid ? 'You' : `Student ${String.fromCharCode(65 + index)}`}</span>
                             {ticket.attendanceMode && <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${ticket.attendanceMode === 'online' ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'}`}>{ticket.attendanceMode === 'online' ? 'Online' : 'In-Person'}</span>}
                           </div>
                           <div className="text-sm text-gray-medium">{ticket.topic} · {ticket.assignment}</div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          {ticket.status === 'resolved' && <span className="px-2 py-1 bg-gray-200 text-gray-500 text-xs font-bold rounded uppercase tracking-wider">Resolved</span>}
-                          {ticket.status === 'active' && index === 0 && <span className="px-2 py-1 bg-warning/20 text-warning-dark text-xs font-bold rounded uppercase tracking-wider">Now</span>}
+                          {index === 0 && <span className="px-2 py-1 bg-warning/20 text-warning-dark text-xs font-bold rounded uppercase tracking-wider">Now</span>}
                           <ChevronRight className={`w-4 h-4 transition-colors ${viewingTicket?.id === ticket.id ? 'text-primary' : 'text-gray-300'}`} />
                         </div>
                       </li>
                     ))}
+                    {activeTickets.length === 0 && (
+                      <li className="text-center py-8 text-gray-medium text-sm">Queue is empty.</li>
+                    )}
                   </ol>
                 </section>
+
+                {/* Resolved Tickets */}
+                {resolvedTickets.length > 0 && (
+                  <section className="mt-6">
+                    <h3 className="text-xs font-bold text-gray-medium uppercase tracking-wider mb-3">Answered ({resolvedTickets.length})</h3>
+                    <ol className="space-y-2">
+                      {resolvedTickets.map((ticket, index) => (
+                        <li 
+                          key={ticket.id} 
+                          className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center gap-3 cursor-pointer opacity-60 hover:opacity-100 transition-all"
+                          onClick={() => setViewingTicketId(ticket.id)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setViewingTicketId(ticket.id); } }}
+                        >
+                          <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                            <CheckCircle2 className="w-4 h-4" />
+                          </div>
+                          <div className="grow">
+                            <span className="font-bold text-gray-medium text-sm">{ticket.uid === user?.uid ? 'You' : `Student ${String.fromCharCode(65 + index)}`}</span>
+                            <div className="text-xs text-gray-medium">{ticket.topic} · {ticket.assignment}</div>
+                          </div>
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-600 text-[10px] font-bold rounded uppercase">Answered</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </section>
+                )}
               </div>
 
               {/* Right Column: Active Question */}
@@ -1905,7 +1933,7 @@ function AppContent() {
                   <div className="bg-gray-50 border-b border-gray-200 p-6 flex items-center justify-between">
                     <div>
                       <h3 id="active-question-heading" className="text-sm font-bold text-gray-medium uppercase tracking-wider mb-1">
-                        {isSessionArchived ? 'Archived Question' : (viewingTicket && viewingTicketIndex === 0 ? 'Active Question' : 'Queued Question')}
+                        {isSessionArchived ? 'Archived Question' : (viewingTicket?.status === 'resolved' ? 'Answered Question' : (viewingTicket && activeTickets.indexOf(viewingTicket) === 0 ? 'Active Question' : 'Queued Question'))}
                       </h3>
                       <div className="text-xl font-bold text-dark">{viewingTicket?.topic || 'Debugging'} · {viewingTicket?.assignment || 'A2'}</div>
                     </div>
