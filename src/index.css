@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #0D7377;
+  --color-primary-hover: #095A5D;
+  --color-primary-light: #E6F0F0;
+  --color-success: #2e7d32;
+  --color-error: #c62828;
+  --color-warning: #f9a825;
+  --color-gray-light: #F5F5F5;
+  --color-gray-medium: #6c757d;
+  --color-dark: #333333;
+}
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    color: var(--color-dark);
+  }
+  
+  /* Global focus styles for accessibility */
+  *:focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
