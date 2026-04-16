@@ -6,9 +6,9 @@ SmartQueue is a queue management system designed to make university office hours
 
 The core problem is pretty straightforward: office hours are one of the most important touchpoints for student learning, but they're often overcrowded, unstructured, and stressful. Students don't know how long they'll wait, TAs get the same questions over and over, and quieter students get drowned out. SmartQueue tries to fix that by giving both sides better tools and better information.
 
-Check out the demo here: [https://smartqueue-demo.netlify.app/](https://smartqueue-demo.netlify.app/) (Demo accounts are student1:root1234, student2:root1234, student3:root1234, student4:root1234, admin:root1234, where admin is the TA account).
+Check out the demo [here](https://smartqueue-demo.netlify.app/)! We setup 4 demo student accounts (student1:root1234, ..., student4:root1234) and one demo TA account (admin:root1234).
 
-Check out the project website here for the design process, methodology, earlier prototypes and more: [smartqueuecsc318.netlify.app](https://smartqueuecsc318.netlify.app/)
+And for the design process, methodology, earlier prototypes and more check out the project website [here](https://smartqueuecsc318.netlify.app/) :\)
 
 ## What it does
 
@@ -26,7 +26,7 @@ We followed a three-phase design process. In the **research phase**, we conducte
 
 In the **exploration and prototyping phase**, we generated three distinct design alternatives (a single ticket queue, topic-based rooms, and an asynchronous triage system), compared them against the requirements, and converged on the single ticket queue model. We sketched and paper-prototyped this direction, then ran an expert evaluation with heuristic walkthroughs that surfaced issues around queue status clarity and confusing interface language, which we iterated on before moving to high-fidelity.
 
-In the **evaluation phase**, we built the full high-fidelity prototype and ran a summative usability evaluation with 11 participants across four task scenarios. The system scored an average SUS of 89.6 (Grade A/Excellent), and the structured intake flow had a 100% task completion rate across all participants. The main weak spot was around the transition from waiting to actually getting help, where live updates and system status weren't always clear enough, particularly during the mock office hours scenario where things were changing in real time.
+In the **evaluation phase**, we built the full high-fidelity prototype and ran a summative usability evaluation with 11 participants across four task scenarios. The system scored an average SUS of 89.6 (Grade A/Excellent), and the structured intake flow had a 100% task completion rate across all participants. For more detailed information on our evals and more feel free to check out our [website](https://smartqueuecsc318.netlify.app/) again.
 
 ## Team
 
@@ -34,7 +34,7 @@ In the **evaluation phase**, we built the full high-fidelity prototype and ran a
 - Sean Jackson — evaluation design, facilitation, report integration
 - Rohan Aslam — front-end prototype, refinement, bug fixing
 - Matthew DeMarinis — data collection, aggregation, convergence rationale
-- Samil Dhawan — results analysis, interpretation, design implications
+- Samil Dhawan ([github](https://github.com/samildhawan)) — results analysis, interpretation, design implications
 
 ## Tech
 
