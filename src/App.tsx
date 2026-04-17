@@ -16,7 +16,11 @@ import {
   LogIn,
   Loader2,
   AlertCircle,
-  GripVertical
+  GripVertical,
+  Building2,
+  UserPlus,
+  Copy,
+  Hash
 } from 'lucide-react';
 import {
   DndContext,
@@ -56,10 +60,16 @@ import {
   Timestamp,
   User,
   OperationType,
-  handleFirestoreError
+  handleFirestoreError,
+  UserProfile,
+  getUserProfile,
+  createUserProfile,
+  createSchool,
+  getSchool,
+  generateSchoolId
 } from './firebase';
 
-type Screen = 'LOGIN' | 'S1' | 'S2' | 'S3' | 'S4' | 'S5' | 'S8' | 'S9' | 'S10' | 'S11' | 'S12' | 'TA_DASHBOARD' | 'TA_SESSION_DETAIL' | 'TA_TICKET_DETAIL' | 'TA_SESSION_LIVE';
+type Screen = 'LOGIN' | 'REGISTER' | 'S1' | 'S2' | 'S3' | 'S4' | 'S5' | 'S8' | 'S9' | 'S10' | 'S11' | 'S12' | 'TA_DASHBOARD' | 'TA_SESSION_DETAIL' | 'TA_TICKET_DETAIL' | 'TA_SESSION_LIVE';
 
 interface Ticket {
   id: string;
@@ -241,6 +251,21 @@ function AppContent() {
   const [seedMessage, setSeedMessage] = useState<string | null>(null);
   const [viewingTicketId, setViewingTicketId] = useState<string | null>(null);
 
+  // User profile & school state
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [schoolName, setSchoolName] = useState('');
+
+  // Registration form state
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regDisplayName, setRegDisplayName] = useState('');
+  const [regRole, setRegRole] = useState<'student' | 'ta'>('student');
+  const [regSchoolMode, setRegSchoolMode] = useState<'join' | 'create'>('join');
+  const [regSchoolId, setRegSchoolId] = useState('');
+  const [regSchoolName, setRegSchoolName] = useState('');
+  const [regError, setRegError] = useState('');
+  const [isRegLoading, setIsRegLoading] = useState(false);
+
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [isEndSessionConfirmOpen, setIsEndSessionConfirmOpen] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
@@ -304,7 +329,7 @@ function AppContent() {
 
     let signOutDebounce: ReturnType<typeof setTimeout> | null = null;
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       console.log('Auth state changed:', { hasUser: !!user, email: user?.email });
       clearTimeout(timeout);
       
@@ -315,20 +340,43 @@ function AppContent() {
           signOutDebounce = null;
         }
         setUser(user);
-        setIsAuthReady(true);
-        if (currentScreenRef.current === 'LOGIN') {
-          if (user.email === 'admin@university.edu' || user.email === 'andrew01px2021@gmail.com') {
-            setCurrentScreen('TA_DASHBOARD');
+        
+        // Fetch the user's profile from Firestore
+        try {
+          const profile = await getUserProfile(user.uid);
+          if (profile) {
+            setUserProfile(profile);
+            // Fetch school name for display
+            const school = await getSchool(profile.schoolId);
+            if (school) setSchoolName(school.name);
+            
+            setIsAuthReady(true);
+            if (currentScreenRef.current === 'LOGIN' || currentScreenRef.current === 'REGISTER') {
+              if (profile.role === 'ta') {
+                setCurrentScreen('TA_DASHBOARD');
+              } else {
+                setCurrentScreen('S1');
+              }
+            }
           } else {
-            setCurrentScreen('S1');
+            // Auth account exists but no Firestore profile (legacy user or incomplete registration)
+            // Send them to register to complete their profile
+            console.warn('User has auth account but no Firestore profile — redirecting to register');
+            setIsAuthReady(true);
+            setCurrentScreen('REGISTER');
           }
+        } catch (err) {
+          console.error('Error fetching user profile:', err);
+          setIsAuthReady(true);
+          setCurrentScreen('REGISTER');
         }
       } else {
         // Debounce sign-out to avoid wiping data on transient token refreshes
-        // If user comes back within 5s, the clear is cancelled above
         signOutDebounce = setTimeout(() => {
           console.log('Auth confirmed signed out — clearing session data');
           setUser(null);
+          setUserProfile(null);
+          setSchoolName('');
           setIsAuthReady(true);
           setSessions([]);
           setCurrentScreen('LOGIN');
@@ -344,14 +392,14 @@ function AppContent() {
 
   // Fetch Sessions and Tickets
   useEffect(() => {
-    if (!isAuthReady || !user) {
-      console.log('Session fetch skipped:', { isAuthReady, hasUser: !!user });
+    if (!isAuthReady || !user || !userProfile) {
+      console.log('Session fetch skipped:', { isAuthReady, hasUser: !!user, hasProfile: !!userProfile });
       return;
     }
 
-    console.log('Starting session fetch...');
+    console.log('Starting session fetch for school:', userProfile.schoolId);
     const sessionsRef = collection(db, 'sessions');
-    const q = query(sessionsRef, orderBy('course'));
+    const q = query(sessionsRef, where('schoolId', '==', userProfile.schoolId), orderBy('course'));
     let isFirstSnapshot = true;
 
     const unsubscribeSessions = onSnapshot(q, (snapshot) => {
@@ -395,8 +443,8 @@ function AppContent() {
     });
 
     return () => unsubscribeSessions();
-  // Use user.uid instead of user object to avoid re-subscribing on token refresh
-  }, [isAuthReady, user?.uid]);
+  // Use user.uid and schoolId to avoid re-subscribing on token refresh
+  }, [isAuthReady, user?.uid, userProfile?.schoolId]);
 
   // Stable key for session IDs to avoid unnecessary re-subscriptions
   const sessionIds = useMemo(() => sessions.map(s => s.id).sort().join(','), [sessions]);
@@ -496,25 +544,42 @@ function AppContent() {
     };
   }, [sessions]);
 
+  const DEMO_SCHOOL_ID = 'sq-demo';
+
   const handleSeedUsers = async () => {
     setIsSeeding(true);
     setSeedMessage(null);
     try {
-      const students = [
-        { email: 'student1@university.edu', pass: 'root1234' },
-        { email: 'student2@university.edu', pass: 'root1234' },
-        { email: 'student3@university.edu', pass: 'root1234' },
-        { email: 'student4@university.edu', pass: 'root1234' },
-        { email: 'admin@university.edu', pass: 'admin1234' }
+      // 1. Create the demo school if it doesn't exist
+      const existingSchool = await getSchool(DEMO_SCHOOL_ID);
+      if (!existingSchool) {
+        await createSchool(DEMO_SCHOOL_ID, { name: 'Demo University', createdBy: 'seed' });
+        console.log('Created demo school: sq-demo');
+      }
+
+      // 2. Create demo users with profiles
+      const demoUsers = [
+        { email: 'student1@university.edu', pass: 'root1234', displayName: 'Student One', role: 'student' as const },
+        { email: 'student2@university.edu', pass: 'root1234', displayName: 'Student Two', role: 'student' as const },
+        { email: 'student3@university.edu', pass: 'root1234', displayName: 'Student Three', role: 'student' as const },
+        { email: 'student4@university.edu', pass: 'root1234', displayName: 'Student Four', role: 'student' as const },
+        { email: 'admin@university.edu', pass: 'admin1234', displayName: 'Demo TA', role: 'ta' as const }
       ];
 
-      for (const s of students) {
+      for (const u of demoUsers) {
         try {
-          await registerWithEmail(s.email, s.pass);
-          console.log(`Created user: ${s.email}`);
+          const cred = await registerWithEmail(u.email, u.pass);
+          // Create Firestore profile for this new user
+          await createUserProfile(cred.user.uid, {
+            email: u.email,
+            displayName: u.displayName,
+            role: u.role,
+            schoolId: DEMO_SCHOOL_ID,
+          });
+          console.log(`Created user + profile: ${u.email}`);
         } catch (err: any) {
           if (err.code === 'auth/email-already-in-use') {
-            console.log(`User already exists: ${s.email}`);
+            console.log(`User already exists: ${u.email}`);
           } else {
             throw err;
           }
@@ -522,7 +587,7 @@ function AppContent() {
       }
       // Sign out so the user stays on the login screen and can choose which account to use
       await logout();
-      setSeedMessage('Users seeded successfully! You can now log in with student1@university.edu / root1234');
+      setSeedMessage('Demo users created! Log in as student1@university.edu / root1234 or admin@university.edu / admin1234');
     } catch (error: any) {
       console.error('Error seeding users:', error);
       setAuthError('Error seeding users: ' + error.message);
@@ -542,11 +607,7 @@ function AppContent() {
         loginEmail = `${email}@university.edu`;
       }
       const userCredential = await loginWithEmail(loginEmail, password);
-      if (isAdmin(userCredential.user)) {
-        setCurrentScreen('TA_DASHBOARD');
-      } else {
-        setCurrentScreen('S1');
-      }
+      // Routing is handled by the onAuthStateChanged listener which fetches the profile
     } catch (error: any) {
       console.error('Login error:', error);
       setAuthError('Invalid username or password. If you haven\'t seeded users yet, click the "Seed Users" button below.');
@@ -555,9 +616,85 @@ function AppContent() {
     }
   };
 
-  const isAdmin = (u: User | null) => {
-    if (!u) return false;
-    return u.email === 'admin@university.edu' || u.email === 'andrew01px2021@gmail.com';
+  const isTA = userProfile?.role === 'ta';
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegError('');
+    setIsRegLoading(true);
+    try {
+      // Validate school
+      let schoolId: string;
+      if (regRole === 'ta' && regSchoolMode === 'create') {
+        // TA creating a new school
+        if (!regSchoolName.trim()) {
+          setRegError('Please enter a school/organization name.');
+          setIsRegLoading(false);
+          return;
+        }
+        schoolId = generateSchoolId();
+        // We'll create the school doc after auth registration
+      } else {
+        // Joining an existing school
+        if (!regSchoolId.trim()) {
+          setRegError('Please enter a School ID to join.');
+          setIsRegLoading(false);
+          return;
+        }
+        schoolId = regSchoolId.trim().toLowerCase();
+        const existingSchool = await getSchool(schoolId);
+        if (!existingSchool) {
+          setRegError(`No school found with ID "${schoolId}". Check the code and try again.`);
+          setIsRegLoading(false);
+          return;
+        }
+      }
+
+      // Create Firebase Auth account
+      const cred = await registerWithEmail(regEmail, regPassword);
+      
+      // Create school doc if TA is creating one
+      if (regRole === 'ta' && regSchoolMode === 'create') {
+        await createSchool(schoolId, { name: regSchoolName.trim(), createdBy: cred.user.uid });
+      }
+
+      // Create user profile in Firestore
+      const profile = await createUserProfile(cred.user.uid, {
+        email: regEmail,
+        displayName: regDisplayName.trim() || regEmail.split('@')[0],
+        role: regRole,
+        schoolId,
+      });
+
+      setUserProfile(profile);
+      const school = await getSchool(schoolId);
+      if (school) setSchoolName(school.name);
+
+      // Route to the right dashboard
+      if (profile.role === 'ta') {
+        setCurrentScreen('TA_DASHBOARD');
+      } else {
+        setCurrentScreen('S1');
+      }
+    } catch (error: any) {
+      console.error('Registration error:', error);
+      if (error.code === 'auth/email-already-in-use') {
+        setRegError('An account with this email already exists. Try logging in instead.');
+      } else if (error.code === 'auth/weak-password') {
+        setRegError('Password must be at least 6 characters.');
+      } else {
+        setRegError(error.message || 'Registration failed. Please try again.');
+      }
+    } finally {
+      setIsRegLoading(false);
+    }
+  };
+
+  // Helper to copy school ID to clipboard
+  const copySchoolId = async () => {
+    if (userProfile?.schoolId) {
+      await navigator.clipboard.writeText(userProfile.schoolId);
+    }
   };
 
   const handleMarkUpNext = async (sessionId: string, ticketId: string) => {
@@ -598,7 +735,7 @@ function AppContent() {
 
   const handleAddSession = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !isAdmin(user)) return;
+    if (!user || !isTA) return;
     if (!validateSessionForm()) return;
     
     try {
@@ -608,6 +745,7 @@ function AppContent() {
         course: newSessionForm.course, title: newSessionForm.title, time: newSessionForm.time,
         location: newSessionForm.location, host: newSessionForm.host, avgMin: newSessionForm.avgMin,
         tags: tagsArray, assignments: assignmentsArray,
+        schoolId: userProfile!.schoolId,
         status: 'upcoming', createdAt: serverTimestamp()
       });
       setIsAddSessionModalOpen(false);
@@ -662,8 +800,8 @@ function AppContent() {
 
   const handleSeedData = async () => {
     console.log('handleSeedData triggered', { userEmail: user?.email });
-    if (!user || !isAdmin(user)) {
-      console.log('Not an admin, returning');
+    if (!user || !isTA) {
+      console.log('Not a TA, returning');
       return;
     }
     
@@ -696,6 +834,7 @@ function AppContent() {
           avgMin: 5,
           tags: ['Homework 3', 'Exam Review', 'Project Clarification', 'Grade Inquiry', 'Concept Review'],
           assignments: ['Assignment 1', 'Assignment 2', 'Assignment 3', 'Assignment 4', 'Midterm', 'Final Exam'],
+          schoolId: userProfile!.schoolId,
           status: 'upcoming'
         },
         {
@@ -707,6 +846,7 @@ function AppContent() {
           avgMin: 10,
           tags: ['Maximum Likelihood', 'Hypothesis Testing', 'Confidence Intervals'],
           assignments: ['Problem Set 1', 'Problem Set 2', 'Problem Set 3', 'Problem Set 4', 'Midterm', 'Final Exam'],
+          schoolId: userProfile!.schoolId,
           status: 'upcoming'
         },
         {
@@ -718,6 +858,7 @@ function AppContent() {
           avgMin: 8,
           tags: ['Stokes Theorem', 'Line Integrals', 'Surface Integrals'],
           assignments: ['Problem Set 1', 'Problem Set 2', 'Problem Set 3', 'Term Test 1', 'Term Test 2', 'Final Exam'],
+          schoolId: userProfile!.schoolId,
           status: 'upcoming'
         }
       ];
@@ -868,10 +1009,24 @@ function AppContent() {
             SQ
           </div>
           <h1 className="text-xl font-bold tracking-tight">SmartQueue</h1>
+          {schoolName && (
+            <span className="hidden sm:inline text-sm text-white/70 ml-2">· {schoolName}</span>
+          )}
         </div>
         <div className="flex items-center gap-4">
           {user ? (
             <>
+              {isTA && userProfile?.schoolId && (
+                <button
+                  onClick={copySchoolId}
+                  className="hidden sm:flex items-center gap-1.5 text-white/70 hover:text-white text-xs font-mono bg-white/10 px-2.5 py-1.5 rounded-lg transition-colors"
+                  title="Click to copy School ID"
+                >
+                  <Hash className="w-3 h-3" />
+                  {userProfile.schoolId}
+                  <Copy className="w-3 h-3" />
+                </button>
+              )}
               <button 
                 onClick={logout}
                 className="text-white/80 hover:text-white flex items-center gap-2 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-white rounded px-2 py-1 transition-colors hover:bg-white/10 active:scale-95"
@@ -880,9 +1035,9 @@ function AppContent() {
                 <span className="hidden sm:inline">Log Out</span>
               </button>
               <div className="flex items-center gap-3">
-                <span className="hidden md:inline text-sm font-medium text-white/90">{user.displayName || user.email}</span>
+                <span className="hidden md:inline text-sm font-medium text-white/90">{userProfile?.displayName || user.displayName || user.email}</span>
                 <img 
-                  src={user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName || 'User'}&background=random`} 
+                  src={user.photoURL || `https://ui-avatars.com/api/?name=${userProfile?.displayName || user.displayName || 'User'}&background=random`} 
                   alt=""
                   className="w-10 h-10 rounded-full border-2 border-white/20 shadow-sm"
                   referrerPolicy="no-referrer"
@@ -996,18 +1151,181 @@ function AppContent() {
               </form>
 
               <div className="mt-8 pt-6 border-t border-gray-100">
-                <p className="text-sm text-gray-medium text-center mb-4">First time here? Seed the demo users to get started.</p>
+                <p className="text-sm text-gray-medium text-center mb-4">Don't have an account?</p>
                 <button 
-                  onClick={handleSeedUsers}
-                  disabled={isSeeding}
+                  onClick={() => { setRegError(''); setCurrentScreen('REGISTER'); }}
                   className="w-full py-3 border-2 border-primary text-primary font-bold rounded-lg hover:bg-primary-light transition-all flex items-center justify-center gap-2"
                 >
-                  {isSeeding ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Seed Demo Users'}
+                  <UserPlus className="w-4 h-4" />
+                  Create Account
                 </button>
               </div>
 
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs text-gray-medium text-center mb-3">Just want to try it out?</p>
+                <button 
+                  onClick={handleSeedUsers}
+                  disabled={isSeeding}
+                  className="w-full py-2.5 bg-gray-100 text-gray-medium font-semibold rounded-lg hover:bg-gray-200 transition-all flex items-center justify-center gap-2 text-sm"
+                >
+                  {isSeeding ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Seed Demo Accounts'}
+                </button>
+                <p className="text-[11px] text-gray-medium/60 text-center mt-2">
+                  Creates demo school <span className="font-mono">sq-demo</span> with student &amp; TA accounts
+                </p>
+              </div>
+            </div>
+          </main>
+        );
+
+      case 'REGISTER':
+        return (
+          <main className="min-h-[calc(100vh-64px)] flex items-center justify-center px-4 py-12 bg-gray-50">
+            <div className="max-w-md w-full bg-white rounded-xl shadow-lg border border-gray-200 p-8">
+              <div className="flex justify-center mb-6">
+                <div className="w-16 h-16 bg-primary rounded-xl flex items-center justify-center text-white font-bold text-3xl shadow-sm">SQ</div>
+              </div>
+              <h2 className="text-2xl font-bold text-dark text-center mb-2">Create Your Account</h2>
+              <p className="text-gray-medium text-center mb-8">Join SmartQueue as a student or TA.</p>
+              
+              <form onSubmit={handleRegister} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-dark mb-1" htmlFor="reg-name">Display Name</label>
+                  <input 
+                    id="reg-name"
+                    type="text"
+                    placeholder="e.g. Andrew G."
+                    value={regDisplayName}
+                    onChange={(e) => setRegDisplayName(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-dark mb-1" htmlFor="reg-email">Email</label>
+                  <input 
+                    id="reg-email"
+                    type="email"
+                    placeholder="you@university.edu"
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-dark mb-1" htmlFor="reg-password">Password</label>
+                  <input 
+                    id="reg-password"
+                    type="password"
+                    placeholder="Min 6 characters"
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+                    required
+                  />
+                </div>
+
+                {/* Role Selection */}
+                <div>
+                  <label className="block text-sm font-bold text-dark mb-2">I am a...</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setRegRole('student'); setRegSchoolMode('join'); }}
+                      className={`p-4 rounded-lg border-2 text-center transition-all ${regRole === 'student' ? 'border-primary bg-primary-light text-primary' : 'border-gray-200 text-gray-medium hover:border-gray-300'}`}
+                    >
+                      <UserIcon className="w-6 h-6 mx-auto mb-1" />
+                      <span className="text-sm font-bold">Student</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegRole('ta')}
+                      className={`p-4 rounded-lg border-2 text-center transition-all ${regRole === 'ta' ? 'border-primary bg-primary-light text-primary' : 'border-gray-200 text-gray-medium hover:border-gray-300'}`}
+                    >
+                      <Building2 className="w-6 h-6 mx-auto mb-1" />
+                      <span className="text-sm font-bold">TA / Instructor</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* School Selection */}
+                <div className="space-y-3 p-4 bg-gray-50 rounded-lg border border-gray-100">
+                  {regRole === 'ta' && (
+                    <div className="flex gap-2 mb-3">
+                      <button
+                        type="button"
+                        onClick={() => setRegSchoolMode('join')}
+                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${regSchoolMode === 'join' ? 'bg-primary text-white' : 'bg-white text-gray-medium border border-gray-200'}`}
+                      >
+                        Join Existing
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRegSchoolMode('create')}
+                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${regSchoolMode === 'create' ? 'bg-primary text-white' : 'bg-white text-gray-medium border border-gray-200'}`}
+                      >
+                        Create New
+                      </button>
+                    </div>
+                  )}
+
+                  {regSchoolMode === 'join' ? (
+                    <div>
+                      <label className="block text-sm font-bold text-dark mb-1">
+                        <Hash className="w-3.5 h-3.5 inline mr-1" />
+                        School ID
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. sq-7x3k"
+                        value={regSchoolId}
+                        onChange={(e) => setRegSchoolId(e.target.value)}
+                        className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all font-mono"
+                      />
+                      <p className="text-xs text-gray-medium mt-1">Ask your TA or instructor for this code.</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-sm font-bold text-dark mb-1">
+                        <Building2 className="w-3.5 h-3.5 inline mr-1" />
+                        School / Organization Name
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. University of Toronto"
+                        value={regSchoolName}
+                        onChange={(e) => setRegSchoolName(e.target.value)}
+                        className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
+                      />
+                      <p className="text-xs text-gray-medium mt-1">A unique School ID will be generated for you to share with students.</p>
+                    </div>
+                  )}
+                </div>
+
+                {regError && (
+                  <div className="p-3 bg-error/10 border border-error/20 rounded text-error text-sm flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <span>{regError}</span>
+                  </div>
+                )}
+
+                <button 
+                  type="submit"
+                  disabled={isRegLoading}
+                  className="w-full py-4 bg-primary text-white font-bold rounded-lg shadow-md hover:bg-primary-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                >
+                  {isRegLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <UserPlus className="w-5 h-5" />}
+                  Create Account
+                </button>
+              </form>
+
               <div className="mt-6 text-center">
-                <p className="text-xs text-gray-medium">Demo Credentials: student1 / root1234</p>
+                <button 
+                  onClick={() => { setAuthError(''); setCurrentScreen('LOGIN'); }}
+                  className="text-sm text-primary font-semibold hover:underline"
+                >
+                  Already have an account? Sign in
+                </button>
               </div>
             </div>
           </main>
@@ -1018,10 +1336,10 @@ function AppContent() {
           <main id="main-content" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <h2 className="sr-only">Student Dashboard</h2>
             
-            {/* Admin Reset/Seeding (Only for admin) */}
-            {isAdmin(user) && (
+            {/* Admin Reset/Seeding (Only for TAs) */}
+            {isTA && (
               <div className="mb-8 p-6 bg-primary-light rounded-xl border-2 border-dashed border-primary flex flex-col items-center text-center">
-                <h3 className="text-lg font-bold text-primary mb-2">Admin Controls</h3>
+                <h3 className="text-lg font-bold text-primary mb-2">TA Controls</h3>
                 <p className="text-dark mb-4">Reset the system to the base state (3 default sessions, no tickets).</p>
                 
                 {resetStatus && (
@@ -2150,10 +2468,24 @@ function AppContent() {
                 <div className="flex items-center gap-3">
                   <h1 className="text-xl font-black tracking-tighter uppercase">SmartQueue</h1>
                   <span className="px-2 py-0.5 bg-white/20 rounded text-[10px] font-bold uppercase tracking-widest">TA</span>
+                  {schoolName && (
+                    <span className="hidden sm:inline text-sm text-white/60">· {schoolName}</span>
+                  )}
                 </div>
                 <div className="flex items-center gap-4">
+                  {userProfile?.schoolId && (
+                    <button
+                      onClick={copySchoolId}
+                      className="hidden sm:flex items-center gap-1.5 text-white/70 hover:text-white text-xs font-mono bg-white/10 px-2.5 py-1.5 rounded-lg transition-colors"
+                      title="Click to copy School ID for students"
+                    >
+                      <Hash className="w-3 h-3" />
+                      {userProfile.schoolId}
+                      <Copy className="w-3 h-3" />
+                    </button>
+                  )}
                   <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-sm">
-                    {user?.email?.substring(0, 2).toUpperCase() || 'JK'}
+                    {userProfile?.displayName?.substring(0, 2).toUpperCase() || user?.email?.substring(0, 2).toUpperCase() || 'TA'}
                   </div>
                   <button onClick={logout} className="p-2 hover:bg-white/10 rounded-full transition-colors" aria-label="Logout">
                     <LogOut className="w-5 h-5" />
@@ -2163,10 +2495,10 @@ function AppContent() {
             </header>
 
             <div className="max-w-7xl mx-auto px-4 pt-8">
-              {/* Admin Reset/Seeding (Only for admin) */}
-              {isAdmin(user) && (
+              {/* Admin Reset/Seeding (Only for TAs) */}
+              {isTA && (
                 <div className="mb-8 p-6 bg-primary-light rounded-xl border-2 border-dashed border-primary flex flex-col items-center text-center">
-                  <h3 className="text-lg font-bold text-primary mb-2">Admin Controls</h3>
+                  <h3 className="text-lg font-bold text-primary mb-2">TA Controls</h3>
                   <p className="text-dark mb-4">Reset the system to the base state (3 default sessions, no tickets).</p>
                   
                   {resetStatus && (
@@ -2525,7 +2857,7 @@ function AppContent() {
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-sm">
-                    {user?.email?.substring(0, 2).toUpperCase() || 'JK'}
+                    {userProfile?.displayName?.substring(0, 2).toUpperCase() || user?.email?.substring(0, 2).toUpperCase() || 'TA'}
                   </div>
                   <button onClick={logout} className="p-2 hover:bg-white/10 rounded-full transition-colors" aria-label="Logout">
                     <LogOut className="w-5 h-5" />
@@ -2669,7 +3001,7 @@ function AppContent() {
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-sm">
-                    {user?.email?.substring(0, 2).toUpperCase() || 'JK'}
+                    {userProfile?.displayName?.substring(0, 2).toUpperCase() || user?.email?.substring(0, 2).toUpperCase() || 'TA'}
                   </div>
                   <button onClick={logout} className="p-2 hover:bg-white/10 rounded-full transition-colors" aria-label="Logout">
                     <LogOut className="w-5 h-5" />
@@ -2812,7 +3144,7 @@ function AppContent() {
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-sm">
-                    {user?.email?.substring(0, 2).toUpperCase() || 'JK'}
+                    {userProfile?.displayName?.substring(0, 2).toUpperCase() || user?.email?.substring(0, 2).toUpperCase() || 'TA'}
                   </div>
                   <button onClick={logout} className="p-2 hover:bg-white/10 rounded-full transition-colors" aria-label="Logout">
                     <LogOut className="w-5 h-5" />
@@ -3020,7 +3352,7 @@ function AppContent() {
       <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 bg-white text-primary px-4 py-2 rounded shadow-lg z-50 font-bold outline-none ring-2 ring-primary">
         Skip to main content
       </a>
-      {currentScreen !== 'LOGIN' && !currentScreen.startsWith('TA_') && <TopNav />}
+      {currentScreen !== 'LOGIN' && currentScreen !== 'REGISTER' && !currentScreen.startsWith('TA_') && <TopNav />}
       {renderScreen()}
     </div>
   );
