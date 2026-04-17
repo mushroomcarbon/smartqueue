@@ -550,42 +550,71 @@ function AppContent() {
     setIsSeeding(true);
     setSeedMessage(null);
     try {
-      // 1. Create the demo school if it doesn't exist
+      // 1. Register the TA account first — this signs us in, which is needed
+      //    for Firestore writes (rules require isSignedIn())
+      let taUid: string | null = null;
+      try {
+        const taCred = await registerWithEmail('admin@university.edu', 'admin1234');
+        taUid = taCred.user.uid;
+        console.log('Created TA auth account');
+      } catch (err: any) {
+        if (err.code === 'auth/email-already-in-use') {
+          console.log('TA account already exists — logging in to proceed');
+          const taCred = await loginWithEmail('admin@university.edu', 'admin1234');
+          taUid = taCred.user.uid;
+        } else {
+          throw err;
+        }
+      }
+
+      // 2. Now we're signed in as the TA — create the demo school if needed
       const existingSchool = await getSchool(DEMO_SCHOOL_ID);
       if (!existingSchool) {
-        await createSchool(DEMO_SCHOOL_ID, { name: 'Demo University', createdBy: 'seed' });
+        await createSchool(DEMO_SCHOOL_ID, { name: 'Demo University', createdBy: taUid! });
         console.log('Created demo school: sq-demo');
       }
 
-      // 2. Create demo users with profiles
-      const demoUsers = [
-        { email: 'student1@university.edu', pass: 'root1234', displayName: 'Student One', role: 'student' as const },
-        { email: 'student2@university.edu', pass: 'root1234', displayName: 'Student Two', role: 'student' as const },
-        { email: 'student3@university.edu', pass: 'root1234', displayName: 'Student Three', role: 'student' as const },
-        { email: 'student4@university.edu', pass: 'root1234', displayName: 'Student Four', role: 'student' as const },
-        { email: 'admin@university.edu', pass: 'admin1234', displayName: 'Demo TA', role: 'ta' as const }
+      // 3. Create TA profile if it doesn't exist
+      const existingTAProfile = await getUserProfile(taUid!);
+      if (!existingTAProfile) {
+        await createUserProfile(taUid!, {
+          email: 'admin@university.edu',
+          displayName: 'Demo TA',
+          role: 'ta',
+          schoolId: DEMO_SCHOOL_ID,
+        });
+        console.log('Created TA profile');
+      }
+
+      // 4. Create student accounts + profiles
+      const students = [
+        { email: 'student1@university.edu', pass: 'root1234', displayName: 'Student One' },
+        { email: 'student2@university.edu', pass: 'root1234', displayName: 'Student Two' },
+        { email: 'student3@university.edu', pass: 'root1234', displayName: 'Student Three' },
+        { email: 'student4@university.edu', pass: 'root1234', displayName: 'Student Four' },
       ];
 
-      for (const u of demoUsers) {
+      for (const s of students) {
         try {
-          const cred = await registerWithEmail(u.email, u.pass);
-          // Create Firestore profile for this new user
+          const cred = await registerWithEmail(s.email, s.pass);
+          // Now signed in as this student — create their profile
           await createUserProfile(cred.user.uid, {
-            email: u.email,
-            displayName: u.displayName,
-            role: u.role,
+            email: s.email,
+            displayName: s.displayName,
+            role: 'student',
             schoolId: DEMO_SCHOOL_ID,
           });
-          console.log(`Created user + profile: ${u.email}`);
+          console.log(`Created user + profile: ${s.email}`);
         } catch (err: any) {
           if (err.code === 'auth/email-already-in-use') {
-            console.log(`User already exists: ${u.email}`);
+            console.log(`User already exists: ${s.email}`);
           } else {
             throw err;
           }
         }
       }
-      // Sign out so the user stays on the login screen and can choose which account to use
+
+      // 5. Sign out so the user can choose which account to log in as
       await logout();
       setSeedMessage('Demo users created! Log in as student1@university.edu / root1234 or admin@university.edu / admin1234');
     } catch (error: any) {
@@ -809,9 +838,11 @@ function AppContent() {
     setResetStatus(null);
     try {
       console.log('Starting data reset...');
-      // 1. Get all sessions
-      const sessionsSnap = await getDocs(collection(db, 'sessions'));
-      console.log(`Found ${sessionsSnap.docs.length} sessions to delete`);
+      // 1. Get sessions belonging to this school only
+      const sessionsSnap = await getDocs(
+        query(collection(db, 'sessions'), where('schoolId', '==', userProfile!.schoolId))
+      );
+      console.log(`Found ${sessionsSnap.docs.length} sessions to delete in school ${userProfile!.schoolId}`);
       
       // 2. For each session, delete its tickets then delete the session
       for (const sessionDoc of sessionsSnap.docs) {
